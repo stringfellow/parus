@@ -44,36 +44,50 @@ def _compute_manhattan_distance(diff_image):
     )
 
 
-def _get_squashed(image):
-    """Return an image with a squashed colourspace."""
-    ycbcr = image.convert('YCbCr')
-    img_array = numpy.array(ycbcr)
-    img_array[:,:,0] *= 0  # squash the illuminance band
+def _process_for_compare(image, colourspace=None):
+    """Return an image with a ?squashed colourspace."""
+    if colourspace is None:
+        return image
+
+    converted = image.convert('YCbCr')
+    img_array = numpy.array(converted)
+    # img_array[:, :, 0] *= 0  # squash the illuminance band
     return Image.fromarray(img_array)
 
 
 def _save_parts(
         in_dir, out_dir_name, image_path,
-        original, diffs, bases, comparison
+        original, diff, base, comparison,
+        success_or_fail
 ):
     """Dump the image/parts out."""
     for img, part, sfx in [
         (original, "", image_path.suffix),
-        (diffs[0], "_diff", image_path.suffix),
-        (bases[0], "_base", '.jpg'),
-        (comparison, "_cmp", '.jpg')
+        # (diff, "_diff", image_path.suffix),
+        # (base, "_base", '.jpg'),
+        # (comparison, "_cmp", '.jpg')
     ]:
         img.save(
             in_dir.joinpath(
                 out_dir_name,
-                f"{image_path.stem}{part}{sfx}"
+                f"{image_path.stem}{success_or_fail}{part}{sfx}"
             )
         )
 
 
+def _get_base(bases, mode=None):
+    """Get the base for comparison from the list of bases."""
+    mode = mode or 'screen'
+    base = bases[0]
+    for additional in bases[1:]:
+        base = getattr(ImageChops, mode)(base, additional)
+    return _process_for_compare(base)
+
+
 def find_images(
         dir, diff_threshold,
-        copy=False, base_image_name=None, success_limit=5
+        copy=False, base_image_name=None, success_limit=5,
+        base_mode=None,
 ):
     """Find images in dir that are significantly different from base_image."""
     base_image_name = base_image_name or 'BASE*.JPG'
@@ -84,43 +98,42 @@ def find_images(
 
     image_list = sorted(list(input_dir.rglob('*.JPG')))
 
-    base_names = input_dir.rglob(base_image_name)
+    base_names = list(input_dir.rglob(base_image_name))
     bases = [
-        _get_squashed(Image.open(base_name))
+        Image.open(base_name)
         for base_name in base_names
     ]
 
     success_count = 0
     for image_path in image_list:
-        if output_dir_name in str(image_path):
+        if output_dir_name in str(image_path) or image_path in base_names:
             continue
+
+        base = _get_base(bases, base_mode)
         original = Image.open(image_path)
-        comparison = _get_squashed(original)
+        comparison = _process_for_compare(original)
 
-        diffs = [
-            ImageChops.difference(base, comparison)
-            for base in bases
-        ]
-        pcts = [_compute_manhattan_distance(diff) for diff in diffs]
-        significant = [pct > diff_threshold for pct in pcts]
+        diff = ImageChops.difference(base, comparison)
+        pct = _compute_manhattan_distance(diff)
+        significant = pct > diff_threshold
 
-        if all(significant) and success_count <= success_limit:
-            print('SUCCESS', image_path, pcts)
+        if significant and success_count <= success_limit:
+            print('SUCCESS', image_path, pct)
             success_count += 1
             if copy:
                 _save_parts(
                     input_dir, output_dir_name, image_path,
-                    original, diffs, bases, comparison
+                    original, diff, base, comparison, "_Y_"
                 )
         else:
             # either the comparison showed no match, or we've matched up to the
             # limit; either way we reset our comparison to the current image,
             # which helps for shifting shadows etc.
-            print('FAIL', image_path, pcts)
-            _save_parts(
-                input_dir, output_dir_name, image_path,
-                original, diffs, bases, comparison
-            )
+            print('FAIL', image_path, pct)
+            # _save_parts(
+            #     input_dir, output_dir_name, image_path,
+            #     original, diff, base, comparison, "_N_"
+            # )
             del(bases[0])
-            bases.append(comparison)
+            bases.append(original)
             success_count = 0
