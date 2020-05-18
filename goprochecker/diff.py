@@ -105,35 +105,42 @@ def find_images(
     ]
 
     success_count = 0
-    for image_path in image_list:
-        if output_dir_name in str(image_path) or image_path in base_names:
-            continue
+    logfile = open(input_dir.joinpath(output_dir_name, '_log.csv'), 'w')
+    try:
+        for image_path in image_list:
+            if output_dir_name in str(image_path) or image_path in base_names:
+                continue
 
-        base = _get_base(bases, base_mode)
-        original = Image.open(image_path)
-        comparison = _process_for_compare(original)
+            base = _get_base(bases, base_mode)
+            original = Image.open(image_path)
+            comparison = _process_for_compare(original)
 
-        diff = ImageChops.difference(base, comparison)
-        pct = _compute_manhattan_distance(diff)
-        significant = pct > diff_threshold
+            diff = ImageChops.difference(base, comparison)
+            pct = _compute_manhattan_distance(diff)
+            significant = pct > diff_threshold
 
-        if significant and success_count <= success_limit:
-            print('SUCCESS', image_path, pct)
-            success_count += 1
-            if copy:
-                _save_parts(
-                    input_dir, output_dir_name, image_path,
-                    original, diff, base, comparison, "_Y_"
-                )
-        else:
-            # either the comparison showed no match, or we've matched up to the
-            # limit; either way we reset our comparison to the current image,
-            # which helps for shifting shadows etc.
-            print('FAIL', image_path, pct)
-            # _save_parts(
-            #     input_dir, output_dir_name, image_path,
-            #     original, diff, base, comparison, "_N_"
-            # )
-            del(bases[0])
-            bases.append(original)
-            success_count = 0
+            logfile.write(
+                f'{str(image_path)},{pct},{significant},{success_count}\n'
+            )
+            if significant and success_count <= success_limit:
+                print('SUCCESS', image_path, pct)
+                success_count += 1
+                if copy:
+                    _save_parts(
+                        input_dir, output_dir_name, image_path,
+                        original, diff, base, comparison, "_Y_"
+                    )
+            else:
+                # either the comparison showed no match, or we've matched up to
+                # the limit; either way we reset our comparison to the current
+                # image, which helps for shifting shadows etc.
+                print('FAIL', image_path, pct)
+                # _save_parts(
+                #     input_dir, output_dir_name, image_path,
+                #     original, diff, base, comparison, "_N_"
+                # )
+                del(bases[0])
+                bases.append(original)
+                success_count = 0
+    except:  # noqa
+        logfile.close()
