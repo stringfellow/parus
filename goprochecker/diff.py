@@ -44,44 +44,83 @@ def _compute_manhattan_distance(diff_image):
     )
 
 
+def _get_squashed(image):
+    """Return an image with a squashed colourspace."""
+    ycbcr = image.convert('YCbCr')
+    img_array = numpy.array(ycbcr)
+    img_array[:,:,0] *= 0  # squash the illuminance band
+    return Image.fromarray(img_array)
+
+
+def _save_parts(
+        in_dir, out_dir_name, image_path,
+        original, diffs, bases, comparison
+):
+    """Dump the image/parts out."""
+    for img, part, sfx in [
+        (original, "", image_path.suffix),
+        (diffs[0], "_diff", image_path.suffix),
+        (bases[0], "_base", '.jpg'),
+        (comparison, "_cmp", '.jpg')
+    ]:
+        img.save(
+            in_dir.joinpath(
+                out_dir_name,
+                f"{image_path.stem}{part}{sfx}"
+            )
+        )
+
+
 def find_images(
         dir, diff_threshold,
         copy=False, base_image_name=None, success_limit=5
 ):
     """Find images in dir that are significantly different from base_image."""
     base_image_name = base_image_name or 'BASE*.JPG'
-    results_dir = '__results__'
-    data_folder = Path(dir)
+    output_dir_name = '__results__'
+    input_dir = Path(dir)
     if copy:
-        data_folder.joinpath(results_dir).mkdir(exist_ok=True)
+        input_dir.joinpath(output_dir_name).mkdir(exist_ok=True)
 
-    image_list = sorted(list(data_folder.rglob('*.JPG')))
+    image_list = sorted(list(input_dir.rglob('*.JPG')))
 
-    base_names = data_folder.rglob(base_image_name)
-    bases = [Image.open(base_name) for base_name in base_names]
+    base_names = input_dir.rglob(base_image_name)
+    bases = [
+        _get_squashed(Image.open(base_name))
+        for base_name in base_names
+    ]
 
     success_count = 0
     for image_path in image_list:
-        if results_dir in str(image_path):
+        if output_dir_name in str(image_path):
             continue
-        comp = Image.open(image_path)
+        original = Image.open(image_path)
+        comparison = _get_squashed(original)
+
         diffs = [
-            ImageChops.difference(base, comp)
+            ImageChops.difference(base, comparison)
             for base in bases
         ]
         pcts = [_compute_manhattan_distance(diff) for diff in diffs]
-        sig = [pct > diff_threshold for pct in pcts]
-        if all(sig) and success_count <= success_limit:
-            print(image_path, pcts)
+        significant = [pct > diff_threshold for pct in pcts]
+
+        if all(significant) and success_count <= success_limit:
+            print('SUCCESS', image_path, pcts)
             success_count += 1
             if copy:
-                comp.save(
-                    data_folder.joinpath(results_dir, Path(image_path).name)
+                _save_parts(
+                    input_dir, output_dir_name, image_path,
+                    original, diffs, bases, comparison
                 )
         else:
             # either the comparison showed no match, or we've matched up to the
             # limit; either way we reset our comparison to the current image,
             # which helps for shifting shadows etc.
+            print('FAIL', image_path, pcts)
+            _save_parts(
+                input_dir, output_dir_name, image_path,
+                original, diffs, bases, comparison
+            )
             del(bases[0])
-            bases.append(comp)
+            bases.append(comparison)
             success_count = 0
