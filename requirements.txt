@@ -1,0 +1,6 @@
+pillow
+ipdb
+ipython
+numpy
+pylama
+pylama-pylint
